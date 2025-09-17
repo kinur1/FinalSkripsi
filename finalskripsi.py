@@ -61,9 +61,9 @@ if st.button("🚀 Jalankan Prediksi"):
     }
     asset = asset_mapping[asset_name_display]
 
-    # Ambil data dari Yahoo Finance
+    # Ambil data dari Yahoo Finance (tambahkan +1 hari ke end_date)
     st.write(f"📥 Mengambil data harga {asset_name_display} ({asset}) dari Yahoo Finance...")
-    df = yf.download(asset, start=start_date, end=end_date)
+    df = yf.download(asset, start=start_date, end=end_date + datetime.timedelta(days=1))
     df.reset_index(inplace=True)
 
     # Cek data kosong
