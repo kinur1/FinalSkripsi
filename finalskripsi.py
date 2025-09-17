@@ -21,11 +21,11 @@ default_time_step = 100
 default_epoch = 25
 default_asset = 'BITCOIN'
 
-# Initialize session state to avoid re-running everything
+# Initialize session state
 if 'model_ran' not in st.session_state:
     st.session_state.model_ran = False
 
-# Input pengaturan model menggunakan radio buttons dalam kolom
+# Input pengaturan model
 col1, col2 = st.columns(2)
 with col1:
     time_step = st.radio("Time Step", options=valid_time_steps, index=valid_time_steps.index(default_time_step))
@@ -36,33 +36,20 @@ with col2:
 start_date = st.date_input("Tanggal Mulai", pd.to_datetime("2020-01-01"))
 end_date = st.date_input("Tanggal Akhir", pd.to_datetime("2024-01-01"))
 
-# Pilihan aset dengan nama tampilan yang berbeda
+# Pilihan aset
 asset_name_display = st.radio("Pilih Aset", options=['BITCOIN', 'ETHEREUM'], index=['BITCOIN', 'ETHEREUM'].index(default_asset))
 
-# Check if all inputs are valid
+# Tombol jalankan
 if st.button("Jalankan Prediksi"):
 
-    # Validation
-    if time_step not in valid_time_steps:
-        st.error("Pilih Time Step yang valid.")
-        time_step = default_time_step  # Fallback to default value
-    if epoch_option not in valid_epochs:
-        st.error("Pilih Jumlah Epoch yang valid.")
-        epoch_option = default_epoch  # Fallback to default value
     if start_date >= end_date:
         st.error("Tanggal akhir harus lebih besar dari tanggal mulai.")
-    if asset_name_display not in ['BITCOIN', 'ETHEREUM']:
-        st.error("Pilih Aset yang valid.")
-        asset_name_display = default_asset  # Fallback to default value
-
-    if (time_step in valid_time_steps) and (epoch_option in valid_epochs) and (start_date < end_date) and (asset_name_display in ['BITCOIN', 'ETHEREUM']):
-        # Mapping antara nama tampilan dan ticker sebenarnya
+    else:
+        # Mapping aset -> ticker
         asset_mapping = {
             'BITCOIN': 'BTC-USD',
             'ETHEREUM': 'ETH-USD'
         }
-
-        # Mendapatkan ticker berdasarkan pilihan pengguna
         asset = asset_mapping[asset_name_display]
 
         # Ambil data dari Yahoo Finance
@@ -70,7 +57,7 @@ if st.button("Jalankan Prediksi"):
         df = yf.download(asset, start=start_date, end=end_date)
         df.reset_index(inplace=True)
 
-        # Visualisasi data
+        # Visualisasi data historis
         st.write(f"### Histori Harga Penutupan {asset_name_display}")
         fig = px.line(df, x='Date', y='Close', title=f'Histori Harga Penutupan {asset_name_display}')
         st.plotly_chart(fig)
@@ -107,7 +94,8 @@ if st.button("Jalankan Prediksi"):
         model.compile(loss="mean_squared_error", optimizer="adam")
 
         # Train the model
-        history = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=epoch_option, batch_size=32, verbose=1)
+        history = model.fit(X_train, y_train, validation_data=(X_test, y_test),
+                            epochs=epoch_option, batch_size=32, verbose=1)
 
         # Predictions
         train_predict = model.predict(X_train)
@@ -125,7 +113,7 @@ if st.button("Jalankan Prediksi"):
         train_mape = np.mean(np.abs((original_ytrain - train_predict) / original_ytrain)) * 100
         test_mape = np.mean(np.abs((original_ytest - test_predict) / original_ytest)) * 100
 
-        # Save model state to session_state
+        # Simpan hasil
         st.session_state.model_ran = True
         st.session_state.df = df
         st.session_state.train_predict = train_predict
@@ -133,32 +121,27 @@ if st.button("Jalankan Prediksi"):
         st.session_state.original_ytrain = original_ytrain
         st.session_state.original_ytest = original_ytest
         st.session_state.time_step = time_step
-        st.session_state.num_test_days = len(test_predict)  # Jumlah hari yang diprediksi
 
-        # Display metrics
-        st.write("### Metrik Evaluasi")
-        st.write(f"**RMSE (Training Data):** {train_rmse}")
-        st.write(f"**RMSE (Testing Data):** {test_rmse}")
-        st.write(f"**MAPE (Training Data):** {train_mape}%")
-        st.write(f"**MAPE (Testing Data):** {test_mape}%")
+        # Tampilkan metrik evaluasi
+        st.write("### 📊 Metrik Evaluasi Model")
+        st.metric(label="RMSE (Training)", value=f"{train_rmse:.4f}")
+        st.metric(label="RMSE (Testing)", value=f"{test_rmse:.4f}")
+        st.metric(label="MAPE (Training)", value=f"{train_mape:.2f}%")
+        st.metric(label="MAPE (Testing)", value=f"{test_mape:.2f}%")
 
-        # Display additional details
-        st.write("### Detail Lain")
-        st.write(f"**Jumlah Data Training:** {len(X_train)}")
-        st.write(f"**Jumlah Data Testing:** {len(X_test)}")
-        st.write(f"**Jumlah Epoch yang Dipilih:** {epoch_option}")
-        st.write(f"**Time Step yang Dipilih:** {time_step}")
-        st.write(f"**Jumlah Hari yang Diprediksi:** {st.session_state.num_test_days}")
+        # Detail tambahan
+        st.write("### 🔎 Detail")
+        st.write(f"- Jumlah Data Training: {len(X_train)}")
+        st.write(f"- Jumlah Data Testing: {len(X_test)}")
+        st.write(f"- Jumlah Epoch: {epoch_option}")
+        st.write(f"- Time Step: {time_step}")
 
-# Jika model sudah dijalankan, tampilkan hasil prediksi
+# Jika model sudah dijalankan
 if st.session_state.model_ran:
-    # Visualisasi prediksi
     look_back = st.session_state.time_step
     df = st.session_state.df
     train_predict = st.session_state.train_predict
     test_predict = st.session_state.test_predict
-    original_ytrain = st.session_state.original_ytrain
-    original_ytest = st.session_state.original_ytest
 
     trainPredictPlot = np.empty_like(df[['Close']])
     trainPredictPlot[:, :] = np.nan
@@ -175,13 +158,13 @@ if st.session_state.model_ran:
         'Test_Predicted_Close': testPredictPlot.reshape(1, -1)[0][:len(df)]
     })
 
-    st.write(f"### Perbandingan Harga Penutupan Asli vs Prediksi untuk {asset_name_display}")
+    st.write("### Grafik Perbandingan Harga Asli vs Prediksi")
     fig = px.line(plotdf, x='Date', y=['Original_Close', 'Train_Predicted_Close', 'Test_Predicted_Close'],
                   labels={'value': 'Harga', 'Date': 'Tanggal'},
                   title=f'Harga Penutupan Asli vs Prediksi untuk {asset_name_display}')
     st.plotly_chart(fig)
 
-    # Display the DataFrame of prediction results
+    # DataFrame hasil prediksi
     result_df = pd.DataFrame({
         'Date': df['Date'][st.session_state.time_step + 1:st.session_state.time_step + 1 + len(train_predict) + len(test_predict)],
         'Original_Close': np.concatenate([st.session_state.original_ytrain.flatten(), st.session_state.original_ytest.flatten()]),
@@ -189,5 +172,5 @@ if st.session_state.model_ran:
     })
     result_df.reset_index(drop=True, inplace=True)
 
-    st.write("### Hasil Prediksi dalam DataFrame")
-    st.write(result_df)
+    st.write("### 📑 Hasil Prediksi dalam DataFrame")
+    st.dataframe(result_df)
