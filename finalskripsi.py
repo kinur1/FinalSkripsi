@@ -72,6 +72,12 @@ if st.button("🚀 Jalankan Prediksi"):
         df = yf.download(asset, start=start_date, end=end_date)
         df.reset_index(inplace=True)
 
+        # Validasi apakah data tersedia
+        if df.empty:
+        st.error(f"⚠️ Data untuk {asset} ({asset_name_display}) tidak ditemukan pada rentang {start_date} s/d {end_date}. "
+                 f"Silakan pilih tanggal lain atau pastikan ticker benar.")
+        st.stop()
+
         # Validasi jika data kosong
         if df.empty:
             st.error("❌ Data tidak tersedia untuk rentang tanggal yang dipilih.")
