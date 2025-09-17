@@ -52,12 +52,12 @@ if st.button("Jalankan Prediksi"):
         }
         asset = asset_mapping[asset_name_display]
 
-       # Ambil data dari Yahoo Finance
+       #Ambil data dari Yahoo Finance
        st.write(f"Mengambil data harga {asset_name_display} ({asset}) dari Yahoo Finance...")
        df = yf.download(asset, start=start_date, end=end_date)
         df.reset_index(inplace=True)
 
-        # ✅ Cek apakah data kosong
+        #✅ Cek apakah data kosong
         if df.empty:
             st.error("❌ Data tidak tersedia untuk rentang tanggal yang dipilih. Silakan pilih tanggal lain.")
             st.stop()
