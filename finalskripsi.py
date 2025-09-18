@@ -63,7 +63,14 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     # Preprocessing
     closedf = df[['Close']]
     scaler = MinMaxScaler(feature_range=(0, 1))
-    closedf = scaler.fit_transform(np.array(closedf).reshape(-1, 1))
+    arr = np.array(closedf).reshape(-1, 1)
+
+    # cek apakah data kosong
+    if arr.shape[0] == 0:
+        st.error("⚠️ Data kosong. Coba ganti ticker atau rentang tanggal yang valid.")
+        st.stop()  # hentikan eksekusi supaya tidak lanjut ke bawah
+    else:
+        closedf = scaler.fit_transform(arr)
 
     # Split data
     training_size = int(len(closedf) * 0.90)
