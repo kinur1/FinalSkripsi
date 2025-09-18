@@ -9,10 +9,15 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM
+from datetime import datetime, date
 
 # Title
-st.title("📈 Prediksi Harga Cryptocurrency dengan LSTM")
-st.write("Aplikasi ini memprediksi harga penutupan cryptocurrency menggunakan model LSTM.")
+st.title("📈 Prediksi Harga Cryptocurrency dengan LSTM (Alpha Vantage)")
+st.write("Aplikasi ini memprediksi harga penutupan cryptocurrency menggunakan model LSTM dan data dari Alpha Vantage.")
+
+# === CONFIG ===
+API_KEY = "45G1G2AY7W8KD3S5"  # ganti pakai API key kamu
+BASE_URL = "https://www.alphavantage.co/query"
 
 # Valid options
 valid_time_steps = [25, 50, 75, 100]
@@ -33,11 +38,43 @@ with col2:
     epoch_option = st.radio("🔄 Jumlah Epoch", options=valid_epochs, index=valid_epochs.index(default_epoch))
 
 # Date selection
-start_date = st.date_input("📅 Tanggal Mulai", pd.to_datetime("2022-01-01"))
-end_date = st.date_input("📅 Tanggal Akhir", pd.to_datetime("2023-01-01"))
+start_date = st.date_input("📅 Tanggal Mulai", pd.to_datetime("2020-01-01"))
+end_date = st.date_input("📅 Tanggal Akhir", pd.to_datetime("2024-01-01"))
 
 # Asset selection
 asset_name_display = st.radio("💰 Pilih Aset", options=['BITCOIN', 'ETHEREUM'], index=0)
+
+# Mapping assets (Alpha Vantage pakai simbol BTC / ETH, bukan BTC-USD)
+asset_mapping = {'BITCOIN': 'BTC', 'ETHEREUM': 'ETH'}
+asset = asset_mapping[asset_name_display]
+
+# Helper: Fetch Alpha Vantage
+def fetch_alpha_vantage(symbol, apikey):
+    params = {
+        "function": "DIGITAL_CURRENCY_DAILY",
+        "symbol": symbol,
+        "market": "USD",
+        "apikey": apikey
+    }
+    r = requests.get(BASE_URL, params=params, timeout=30)
+    data = r.json()
+    if "Time Series (Digital Currency Daily)" not in data:
+        return None
+    ts = data["Time Series (Digital Currency Daily)"]
+    records = []
+    for dt_str, values in ts.items():
+        records.append({
+            "Date": dt_str,
+            "Open": float(values.get("1a. open (USD)", 0)),
+            "High": float(values.get("2a. high (USD)", 0)),
+            "Low": float(values.get("3a. low (USD)", 0)),
+            "Close": float(values.get("4a. close (USD)", 0)),
+            "Volume": float(values.get("5. volume", 0))
+        })
+    df = pd.DataFrame(records)
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+    return df
 
 # Validasi Input
 is_valid = (start_date < end_date)
@@ -45,36 +82,19 @@ is_valid = (start_date < end_date)
 # Run Prediction Button
 if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
 
-    # Mapping ke Binance Symbol
-    asset_mapping = {'BITCOIN': 'BTCUSDT', 'ETHEREUM': 'ETHUSDT'}
-    symbol = asset_mapping[asset_name_display]
+    # Fetch data
+    st.write(f"📥 Mengambil data harga {asset_name_display} ({asset}) dari Alpha Vantage...")
+    df = fetch_alpha_vantage(asset, API_KEY)
 
-    st.write(f"📥 Mengambil data harga {asset_name_display} ({symbol}) dari Binance API...")
-
-    # Convert ke timestamp (Binance pakai ms)
-    start_ms = int(pd.Timestamp(start_date).timestamp() * 1000)
-    end_ms = int(pd.Timestamp(end_date).timestamp() * 1000)
-
-    url = "https://api.binance.com/api/v3/klines"
-    params = {"symbol": symbol, "interval": "1d", "startTime": start_ms, "endTime": end_ms}
-    response = requests.get(url, params=params)
-
-    if response.status_code != 200:
-        st.error("⚠️ Gagal mengambil data dari Binance API.")
+    if df is None or df.empty:
+        st.error("❌ Gagal mengambil data dari Alpha Vantage. Coba lagi nanti.")
         st.stop()
 
-    data = response.json()
-    if len(data) == 0:
-        st.error("⚠️ Data kosong. Coba ganti ticker atau rentang tanggal yang valid.")
+    # Filter by date
+    df = df[(df["Date"].dt.date >= start_date) & (df["Date"].dt.date <= end_date)]
+    if df.empty:
+        st.warning(f"Tidak ada data {asset_name_display} untuk rentang {start_date} s/d {end_date}")
         st.stop()
-
-    # Format DataFrame
-    df = pd.DataFrame(data, columns=[
-        "timestamp","open","high","low","close","volume",
-        "close_time","qav","num_trades","taker_base_vol","taker_quote_vol","ignore"
-    ])
-    df["Date"] = pd.to_datetime(df["timestamp"], unit="ms")
-    df["Close"] = df["close"].astype(float)
 
     # Plot harga asli
     st.write(f"### 📊 Histori Harga Penutupan {asset_name_display}")
@@ -84,13 +104,7 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     # Preprocessing
     closedf = df[['Close']]
     scaler = MinMaxScaler(feature_range=(0, 1))
-    arr = np.array(closedf).reshape(-1, 1)
-
-    if arr.shape[0] == 0:
-        st.error("⚠️ Data kosong setelah preprocessing.")
-        st.stop()
-    else:
-        closedf = scaler.fit_transform(arr)
+    closedf = scaler.fit_transform(np.array(closedf).reshape(-1, 1))
 
     # Split data
     training_size = int(len(closedf) * 0.90)
@@ -107,10 +121,6 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
 
     X_train, y_train = create_dataset(train_data, time_step)
     X_test, y_test = create_dataset(test_data, time_step)
-
-    if X_train.shape[0] == 0 or X_test.shape[0] == 0:
-        st.error("⚠️ Dataset training/testing kosong. Coba perpendek rentang tanggal.")
-        st.stop()
 
     # Reshape data
     X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
@@ -169,9 +179,8 @@ if st.session_state.model_ran:
     asset_name_display = st.session_state.asset_name_display
 
     # DataFrame Prediksi
-    predict_dates = df['Date'][st.session_state.time_step+1:st.session_state.time_step+1+len(train_predict)+len(test_predict)]
     result_df = pd.DataFrame({
-        'Date': predict_dates.values,
+        'Date': df.iloc[st.session_state.time_step+1:st.session_state.time_step+1+len(train_predict)+len(test_predict)]['Date'].values,
         'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
         'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
     })
