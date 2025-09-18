@@ -1,5 +1,5 @@
 import streamlit as st
-import yfinance as yf
+import requests
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -10,9 +10,14 @@ from sklearn.metrics import mean_squared_error
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM
 
+# === CONFIG ===
+API_KEY = "45G1G2AY7W8KD3S5"  # API key Alpha Vantage
+BASE_URL = "https://www.alphavantage.co/query"
+
+# ======================
 # Title
-st.title("📈 Prediksi Harga Cryptocurrency dengan LSTM")
-st.write("Aplikasi ini memprediksi harga penutupan cryptocurrency menggunakan model LSTM.")
+st.title("📈 Prediksi Harga Cryptocurrency dengan LSTM (Alpha Vantage)")
+st.write("Aplikasi ini memprediksi harga penutupan cryptocurrency menggunakan model LSTM (BTC & ETH).")
 
 # Valid options
 valid_time_steps = [25, 50, 75, 100]
@@ -39,21 +44,54 @@ end_date = st.date_input("📅 Tanggal Akhir", pd.to_datetime("2024-01-01"))
 # Asset selection
 asset_name_display = st.radio("💰 Pilih Aset", options=['BITCOIN', 'ETHEREUM'], index=0)
 
+# Mapping assets ke Alpha Vantage
+asset_mapping = {'BITCOIN': 'BTC', 'ETHEREUM': 'ETH'}
+asset = asset_mapping[asset_name_display]
+
+# ======================
+# Helper ambil data Alpha Vantage
+def fetch_alpha(symbol: str, apikey: str):
+    params = {
+        "function": "DIGITAL_CURRENCY_DAILY",
+        "symbol": symbol,
+        "market": "USD",
+        "apikey": apikey
+    }
+    r = requests.get(BASE_URL, params=params, timeout=30)
+    if r.status_code != 200:
+        return pd.DataFrame()
+    data = r.json()
+    if "Time Series (Digital Currency Daily)" not in data:
+        return pd.DataFrame()
+    ts = data["Time Series (Digital Currency Daily)"]
+    records = []
+    for dt, values in ts.items():
+        close = None
+        for k, v in values.items():
+            if "close (usd)" in k.lower():
+                close = float(v)
+        records.append({"Date": dt, "Close": close})
+    df = pd.DataFrame(records)
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+    return df
+
 # Validasi Input
 is_valid = (start_date < end_date)
 
+# ======================
 # Run Prediction Button
 if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
-    
-    # Mapping assets
-    asset_mapping = {'BITCOIN': 'BTC-USD', 'ETHEREUM': 'ETH-USD'}
-    asset = asset_mapping[asset_name_display]
 
-    # Fetch data
-    st.write(f"📥 Mengambil data harga {asset_name_display} ({asset}) dari Yahoo Finance...")
-    df = yf.download(asset, start=start_date, end=end_date)
-    df = df.reset_index()
-    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+    st.write(f"📥 Mengambil data harga {asset_name_display} ({asset}-USD) dari Alpha Vantage...")
+    df = fetch_alpha(asset, API_KEY)
+
+    # filter tanggal
+    df = df[(df["Date"].dt.date >= start_date) & (df["Date"].dt.date <= end_date)]
+
+    if df.empty:
+        st.error(f"Tidak ada data untuk {asset_name_display} pada rentang tanggal {start_date} s/d {end_date}.")
+        st.stop()
 
     # Plot harga asli
     st.write(f"### 📊 Histori Harga Penutupan {asset_name_display}")
@@ -85,7 +123,7 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
     X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
 
-    # Build LSTM Model (Enhanced)
+    # Build LSTM Model
     model = Sequential([
         LSTM(50, return_sequences=True, input_shape=(time_step, 1), activation="relu"),
         LSTM(50, return_sequences=False, activation="relu"),
@@ -94,7 +132,8 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     model.compile(loss="mean_squared_error", optimizer="adam")
 
     # Train Model
-    history = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=epoch_option, batch_size=32, verbose=1)
+    history = model.fit(X_train, y_train, validation_data=(X_test, y_test),
+                        epochs=epoch_option, batch_size=32, verbose=1)
 
     # Predictions
     train_predict = model.predict(X_train)
@@ -117,7 +156,8 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
         'model_ran': True, 'df': df,
         'train_predict': train_predict, 'test_predict': test_predict,
         'original_ytrain': original_ytrain, 'original_ytest': original_ytest,
-        'time_step': time_step, 'num_test_days': len(test_predict)
+        'time_step': time_step, 'num_test_days': len(test_predict),
+        'asset_name_display': asset_name_display
     })
 
     # Display metrics
@@ -127,6 +167,7 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     st.write(f"**📉 MAPE (Training):** {train_mape:.2f}%")
     st.write(f"**📉 MAPE (Testing):** {test_mape:.2f}%")
 
+# ======================
 # Menampilkan hasil prediksi setelah model dijalankan
 if st.session_state.model_ran:
     df = st.session_state.df
@@ -134,18 +175,19 @@ if st.session_state.model_ran:
     test_predict = st.session_state.test_predict
     original_ytrain = st.session_state.original_ytrain
     original_ytest = st.session_state.original_ytest
+    asset_name_display = st.session_state.asset_name_display
 
     # DataFrame Prediksi
-    predict_dates = df['Date'][st.session_state.time_step+1:st.session_state.time_step+1+len(train_predict)+len(test_predict)]
     result_df = pd.DataFrame({
         'Date': df.iloc[time_step+1:len(train_predict)+len(test_predict)+time_step+1]['Date'].values,
-    'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
-    'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
+        'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
+        'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
     })
 
     # Plot hasil prediksi
     st.write(f"### 🔮 Prediksi Harga {asset_name_display}")
-    fig = px.line(result_df, x='Date', y=['Original_Close', 'Predicted_Close'], labels={'value': 'Harga', 'Date': 'Tanggal'})
+    fig = px.line(result_df, x='Date', y=['Original_Close', 'Predicted_Close'],
+                  labels={'value': 'Harga', 'Date': 'Tanggal'})
     st.plotly_chart(fig)
 
     # Tampilkan DataFrame
