@@ -140,29 +140,33 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
             st.write(f"**📉 MAPE (Testing):** {test_mape:.2f}%")
 
 # Menampilkan hasil prediksi setelah model dijalankan
-if st.session_state.model_ran:
-    df = st.session_state.df
-    train_predict = st.session_state.train_predict
-    test_predict = st.session_state.test_predict
-    original_ytrain = st.session_state.original_ytrain
-    original_ytest = st.session_state.original_ytest
-    asset_name_display = st.session_state.asset_name_display
+if st.session_state.get("model_ran", False):
+    df = st.session_state.get("df", pd.DataFrame())
+    train_predict = st.session_state.get("train_predict", [])
+    test_predict = st.session_state.get("test_predict", [])
+    original_ytrain = st.session_state.get("original_ytrain", [])
+    original_ytest = st.session_state.get("original_ytest", [])
+    time_step = st.session_state.get("time_step", 25)
+    asset_name_display = st.session_state.get("asset_name_display", "BITCOIN")
 
-    # DataFrame Prediksi
-    predict_dates = df['Date'][st.session_state.time_step+1:
-                               st.session_state.time_step+1+len(train_predict)+len(test_predict)]
-    result_df = pd.DataFrame({
-        'Date': df.iloc[time_step+1:len(train_predict)+len(test_predict)+time_step+1]['Date'].values,
-        'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
-        'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
-    })
+    if len(df) > 0 and len(train_predict) > 0 and len(test_predict) > 0:
+        # DataFrame Prediksi
+        predict_dates = df['Date'][time_step+1: time_step+1+len(train_predict)+len(test_predict)]
+        result_df = pd.DataFrame({
+            'Date': df.iloc[time_step+1:len(train_predict)+len(test_predict)+time_step+1]['Date'].values,
+            'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
+            'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
+        })
 
-    # Plot hasil prediksi
-    st.write(f"### 🔮 Prediksi Harga {asset_name_display}")
-    fig = px.line(result_df, x='Date', y=['Original_Close', 'Predicted_Close'],
-                  labels={'value': 'Harga', 'Date': 'Tanggal'})
-    st.plotly_chart(fig)
+        # Plot hasil prediksi
+        st.write(f"### 🔮 Prediksi Harga {asset_name_display}")
+        fig = px.line(result_df, x='Date', y=['Original_Close', 'Predicted_Close'],
+                      labels={'value': 'Harga', 'Date': 'Tanggal'})
+        st.plotly_chart(fig)
 
-    # Tampilkan DataFrame
-    st.write("### 📊 Hasil Prediksi")
-    st.write(result_df)
+        # Tampilkan DataFrame
+        st.write("### 📊 Hasil Prediksi")
+        st.write(result_df)
+    else:
+        st.warning("⚠️ Belum ada hasil prediksi yang bisa ditampilkan. "
+                   "Silakan jalankan model dengan rentang tanggal lebih panjang atau kurangi time_step.")
