@@ -1,125 +1,159 @@
 import streamlit as st
 import requests
+import tensorflow as tf
+import numpy as np
 import pandas as pd
 import plotly.express as px
-from io import StringIO
-from datetime import datetime, date
-
-st.set_page_config(page_title="Alpha Vantage Crypto Viewer", layout="wide", page_icon="📈")
-st.title("📊 Cryptocurrency Data Viewer (Alpha Vantage)")
+import math
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM
+from datetime import date
 
 # === CONFIG ===
 API_KEY = "45G1G2AY7W8KD3S5"
 BASE_URL = "https://www.alphavantage.co/query"
 
-# === Mapping asset → simbol Alpha Vantage ===
-asset_mapping = {
-    "Bitcoin": "BTC",
-    "Ethereum": "ETH",
-    "Binance Coin": "BNB",
-    "Cardano": "ADA",
-    "Ripple": "XRP",
-    "Solana": "SOL",
-    "Dogecoin": "DOGE"
-}
-
-# === Pilih aset ===
-asset_name = st.selectbox("Pilih aset kripto:", list(asset_mapping.keys()))
-ticker = asset_mapping[asset_name]
-
-col1, col2 = st.columns(2)
-with col1:
-    start_date = st.date_input("Tanggal mulai", date.today().replace(year=date.today().year - 1))
-with col2:
-    end_date = st.date_input("Tanggal akhir", date.today())
-
-if start_date >= end_date:
-    st.error("Tanggal mulai harus sebelum tanggal akhir.")
-    st.stop()
-
-# === caching fetch supaya tidak berulang-ulang ===
+# === Helper: ambil data dari Alpha Vantage ===
 @st.cache_data(ttl=60*60)
-def fetch_alpha_vantage_symbol(symbol: str, apikey: str):
+def fetch_alpha_vantage(symbol: str):
     params = {
         "function": "DIGITAL_CURRENCY_DAILY",
         "symbol": symbol,
         "market": "USD",
-        "apikey": apikey
+        "apikey": API_KEY
     }
     r = requests.get(BASE_URL, params=params, timeout=30)
-    return r.status_code, r.json()
-
-def pick_value_from_values(values: dict, field: str):
-    keys = [k for k in values.keys() if field in k.lower()]
-    usd_keys = [k for k in keys if "(usd)" in k.lower()]
-    use_key = usd_keys[0] if usd_keys else (keys[0] if keys else None)
-    if use_key is None:
-        return 0.0
-    try:
-        return float(values.get(use_key, 0))
-    except Exception:
+    data = r.json()
+    if "Time Series (Digital Currency Daily)" not in data:
+        return pd.DataFrame()
+    ts = data["Time Series (Digital Currency Daily)"]
+    records = []
+    for dt_str, values in ts.items():
         try:
-            return float(str(values.get(use_key, "0")).replace(",", ""))
+            records.append({
+                "Date": dt_str,
+                "Close": float(values.get("4a. close (USD)", 0))
+            })
         except Exception:
-            return 0.0
+            continue
+    df = pd.DataFrame(records)
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+    return df
 
-# === main ===
-with st.spinner(f"Mengambil data {asset_name} ({ticker}) dari Alpha Vantage..."):
-    status, payload = fetch_alpha_vantage_symbol(ticker, API_KEY)
+# === Title ===
+st.title("📈 Prediksi Harga Cryptocurrency dengan LSTM (Alpha Vantage)")
+st.write("Aplikasi ini memprediksi harga penutupan cryptocurrency menggunakan model LSTM.")
 
-if status != 200:
-    st.error(f"Gagal memanggil Alpha Vantage (HTTP {status}) untuk {ticker}.")
-    st.stop()
+# === Options ===
+valid_time_steps = [25, 50, 75, 100]
+valid_epochs = [12, 25, 50, 100]
 
-if "Note" in payload:
-    st.error(f"Rate limit: {payload.get('Note')}")
-    st.stop()
+col1, col2 = st.columns(2)
+with col1:
+    time_step = st.radio("⏳ Time Step", options=valid_time_steps, index=3)
+with col2:
+    epoch_option = st.radio("🔄 Jumlah Epoch", options=valid_epochs, index=1)
 
-if "Error Message" in payload:
-    st.error(f"Error dari Alpha Vantage: {payload.get('Error Message')}")
-    st.stop()
+# === Input tanggal ===
+col1, col2 = st.columns(2)
+with col1:
+    start_date = st.date_input("📅 Tanggal Mulai", date(2020, 1, 1))
+with col2:
+    end_date = st.date_input("📅 Tanggal Akhir", date(2024, 1, 1))
 
-if "Time Series (Digital Currency Daily)" not in payload:
-    st.error(f"Tidak ada data historis untuk {ticker}.")
-    st.stop()
+# === Pilih aset ===
+asset_mapping = {"Bitcoin": "BTC", "Ethereum": "ETH"}
+asset_name = st.radio("💰 Pilih Aset", list(asset_mapping.keys()))
+ticker = asset_mapping[asset_name]
 
-# Parsing data
-ts = payload["Time Series (Digital Currency Daily)"]
-records = []
-for dt_str, values in ts.items():
-    records.append({
-        "Date": dt_str,
-        "Open": pick_value_from_values(values, "open"),
-        "High": pick_value_from_values(values, "high"),
-        "Low": pick_value_from_values(values, "low"),
-        "Close": pick_value_from_values(values, "close"),
-        "Volume": pick_value_from_values(values, "volume")
+if st.button("🚀 Jalankan Prediksi", disabled=(start_date >= end_date)):
+
+    # === Ambil data ===
+    st.write(f"📥 Mengambil data harga {asset_name} ({ticker}) dari Alpha Vantage...")
+    df = fetch_alpha_vantage(ticker)
+
+    # filter range tanggal
+    mask = (df["Date"].dt.date >= start_date) & (df["Date"].dt.date <= end_date)
+    df = df.loc[mask].reset_index(drop=True)
+
+    if df.empty:
+        st.error(f"⚠️ Tidak ada data {asset_name} ({ticker}) pada rentang {start_date} s/d {end_date}.")
+        st.stop()
+
+    # === Plot harga asli ===
+    st.write(f"### 📊 Histori Harga Penutupan {asset_name}")
+    fig = px.line(df, x="Date", y="Close", title=f"Histori Harga {asset_name}")
+    st.plotly_chart(fig)
+
+    # === Preprocessing ===
+    closedf = df[["Close"]]
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    closedf = scaler.fit_transform(np.array(closedf).reshape(-1, 1))
+
+    training_size = int(len(closedf) * 0.90)
+    train_data, test_data = closedf[:training_size], closedf[training_size:]
+
+    def create_dataset(dataset, time_step=1):
+        dataX, dataY = [], []
+        for i in range(len(dataset) - time_step - 1):
+            a = dataset[i:(i + time_step), 0]
+            dataX.append(a)
+            dataY.append(dataset[i + time_step, 0])
+        return np.array(dataX), np.array(dataY)
+
+    X_train, y_train = create_dataset(train_data, time_step)
+    X_test, y_test = create_dataset(test_data, time_step)
+
+    X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
+    X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
+
+    # === Build Model ===
+    model = Sequential([
+        LSTM(50, return_sequences=True, input_shape=(time_step, 1), activation="relu"),
+        LSTM(50, return_sequences=False, activation="relu"),
+        Dense(1)
+    ])
+    model.compile(loss="mean_squared_error", optimizer="adam")
+
+    # === Train ===
+    history = model.fit(X_train, y_train, validation_data=(X_test, y_test),
+                        epochs=epoch_option, batch_size=32, verbose=1)
+
+    # === Prediction ===
+    train_predict = model.predict(X_train)
+    test_predict = model.predict(X_test)
+
+    train_predict = scaler.inverse_transform(train_predict)
+    test_predict = scaler.inverse_transform(test_predict)
+    original_ytrain = scaler.inverse_transform(y_train.reshape(-1, 1))
+    original_ytest = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+    # === Evaluation ===
+    train_rmse = math.sqrt(mean_squared_error(original_ytrain, train_predict))
+    test_rmse = math.sqrt(mean_squared_error(original_ytest, test_predict))
+    train_mape = np.mean(np.abs((original_ytrain - train_predict) / original_ytrain)) * 100
+    test_mape = np.mean(np.abs((original_ytest - test_predict) / original_ytest)) * 100
+
+    st.write("### 📊 Metrik Evaluasi")
+    st.write(f"**✅ RMSE (Training):** {train_rmse}")
+    st.write(f"**✅ RMSE (Testing):** {test_rmse}")
+    st.write(f"**📉 MAPE (Training):** {train_mape:.2f}%")
+    st.write(f"**📉 MAPE (Testing):** {test_mape:.2f}%")
+
+    # === Hasil Prediksi ===
+    result_df = pd.DataFrame({
+        "Date": df.iloc[time_step+1:time_step+1+len(train_predict)+len(test_predict)]["Date"].values,
+        "Original_Close": np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
+        "Predicted_Close": np.concatenate([train_predict.flatten(), test_predict.flatten()])
     })
 
-df = pd.DataFrame(records)
-df["Date"] = pd.to_datetime(df["Date"])
-df = df.sort_values("Date").reset_index(drop=True)
-mask = (df["Date"].dt.date >= start_date) & (df["Date"].dt.date <= end_date)
-df = df.loc[mask].reset_index(drop=True)
+    st.write(f"### 🔮 Prediksi Harga {asset_name}")
+    fig = px.line(result_df, x="Date", y=["Original_Close", "Predicted_Close"],
+                  labels={"value": "Harga", "Date": "Tanggal"})
+    st.plotly_chart(fig)
 
-if df.empty:
-    st.warning(f"Tidak ada data {asset_name} ({ticker}) untuk rentang {start_date} s/d {end_date}.")
-    st.stop()
-
-# tampilkan
-st.subheader(f"{asset_name} ({ticker}) — data {start_date} s/d {end_date}")
-st.dataframe(df.tail(20))
-
-# chart harga penutupan
-if "Close" in df.columns and df["Close"].notna().any():
-    fig = px.line(df, x="Date", y="Close", title=f"{asset_name} ({ticker}) Closing Price (USD)",
-                  labels={"Close": "Close (USD)"}, template="plotly_dark")
-    fig.update_traces(line=dict(width=2.5))
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning(f"Tidak ada kolom Close untuk {ticker}.")
-
-# download CSV
-csv_buf = StringIO()
-df.to_csv(csv_buf, index=False)
-st.download_button(f"⬇️ Download {ticker} CSV", data=csv_buf.getvalue(), file_name=f"{ticker}_data.csv", mime="text/csv")
+    st.write("### 📊 Hasil Prediksi (DataFrame)")
+    st.dataframe(result_df)
