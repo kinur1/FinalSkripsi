@@ -1,5 +1,5 @@
 import streamlit as st
-import yfinance as yf
+import requests
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -33,8 +33,8 @@ with col2:
     epoch_option = st.radio("🔄 Jumlah Epoch", options=valid_epochs, index=valid_epochs.index(default_epoch))
 
 # Date selection
-start_date = st.date_input("📅 Tanggal Mulai", pd.to_datetime("2020-01-01"))
-end_date = st.date_input("📅 Tanggal Akhir", pd.to_datetime("2024-01-01"))
+start_date = st.date_input("📅 Tanggal Mulai", pd.to_datetime("2022-01-01"))
+end_date = st.date_input("📅 Tanggal Akhir", pd.to_datetime("2023-01-01"))
 
 # Asset selection
 asset_name_display = st.radio("💰 Pilih Aset", options=['BITCOIN', 'ETHEREUM'], index=0)
@@ -44,46 +44,50 @@ is_valid = (start_date < end_date)
 
 # Run Prediction Button
 if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
-    
-    # Mapping assets
-    asset_mapping = {'BITCOIN': 'BTC-USD', 'ETHEREUM': 'ETH-USD'}
-    asset = asset_mapping[asset_name_display]
 
-    # Fetch data
-    st.write(f"📥 Mengambil data harga {asset_name_display} ({asset}) dari Yahoo Finance...")
-    df = yf.download(asset, start=start_date, end=end_date)
+    # Mapping ke Binance Symbol
+    asset_mapping = {'BITCOIN': 'BTCUSDT', 'ETHEREUM': 'ETHUSDT'}
+    symbol = asset_mapping[asset_name_display]
 
-    # ✅ Validasi data kosong
-    if df is None or df.empty:
-        st.error("⚠️ Data tidak ditemukan untuk rentang tanggal/ticker ini. Coba ganti input.")
+    st.write(f"📥 Mengambil data harga {asset_name_display} ({symbol}) dari Binance API...")
+
+    # Convert ke timestamp (Binance pakai ms)
+    start_ms = int(pd.Timestamp(start_date).timestamp() * 1000)
+    end_ms = int(pd.Timestamp(end_date).timestamp() * 1000)
+
+    url = "https://api.binance.com/api/v3/klines"
+    params = {"symbol": symbol, "interval": "1d", "startTime": start_ms, "endTime": end_ms}
+    response = requests.get(url, params=params)
+
+    if response.status_code != 200:
+        st.error("⚠️ Gagal mengambil data dari Binance API.")
         st.stop()
 
-    df = df.reset_index()
-    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+    data = response.json()
+    if len(data) == 0:
+        st.error("⚠️ Data kosong. Coba ganti ticker atau rentang tanggal yang valid.")
+        st.stop()
+
+    # Format DataFrame
+    df = pd.DataFrame(data, columns=[
+        "timestamp","open","high","low","close","volume",
+        "close_time","qav","num_trades","taker_base_vol","taker_quote_vol","ignore"
+    ])
+    df["Date"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df["Close"] = df["close"].astype(float)
 
     # Plot harga asli
     st.write(f"### 📊 Histori Harga Penutupan {asset_name_display}")
     fig = px.line(df, x='Date', y='Close', title=f'Histori Harga {asset_name_display}')
     st.plotly_chart(fig)
 
-       # Preprocessing
-    if df.empty:
-        st.error("⚠️ Data dari Yahoo Finance kosong. Coba pilih rentang tanggal lain atau ticker lain.")
-        st.stop()
-
+    # Preprocessing
     closedf = df[['Close']]
     scaler = MinMaxScaler(feature_range=(0, 1))
-
     arr = np.array(closedf).reshape(-1, 1)
-    if arr.shape[0] == 0:
-        st.error("⚠️ Data 'Close' kosong. Coba ganti tanggal/ticker.")
-        st.stop()
-    else:
-        closedf = scaler.fit_transform(arr)
 
-    # ✅ Validasi data kosong setelah reshape
     if arr.shape[0] == 0:
-        st.error("⚠️ Data kosong. Coba ganti ticker atau rentang tanggal yang valid.")
+        st.error("⚠️ Data kosong setelah preprocessing.")
         st.stop()
     else:
         closedf = scaler.fit_transform(arr)
@@ -103,6 +107,10 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
 
     X_train, y_train = create_dataset(train_data, time_step)
     X_test, y_test = create_dataset(test_data, time_step)
+
+    if X_train.shape[0] == 0 or X_test.shape[0] == 0:
+        st.error("⚠️ Dataset training/testing kosong. Coba perpendek rentang tanggal.")
+        st.stop()
 
     # Reshape data
     X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
@@ -161,8 +169,9 @@ if st.session_state.model_ran:
     asset_name_display = st.session_state.asset_name_display
 
     # DataFrame Prediksi
+    predict_dates = df['Date'][st.session_state.time_step+1:st.session_state.time_step+1+len(train_predict)+len(test_predict)]
     result_df = pd.DataFrame({
-        'Date': df.iloc[time_step+1:len(train_predict)+len(test_predict)+time_step+1]['Date'].values,
+        'Date': predict_dates.values,
         'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
         'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
     })
