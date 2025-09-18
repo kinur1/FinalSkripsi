@@ -97,3 +97,72 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
 
             # Build LSTM Model (Enhanced)
             model = Sequential([
+                LSTM(50, return_sequences=True, input_shape=(time_step, 1), activation="relu"),
+                LSTM(50, return_sequences=False, activation="relu"),
+                Dense(1)
+            ])
+            model.compile(loss="mean_squared_error", optimizer="adam")
+
+            # Train Model
+            history = model.fit(X_train, y_train, validation_data=(X_test, y_test),
+                                epochs=epoch_option, batch_size=32, verbose=1)
+
+            # Predictions
+            train_predict = model.predict(X_train)
+            test_predict = model.predict(X_test)
+
+            # Inverse transform
+            train_predict = scaler.inverse_transform(train_predict)
+            test_predict = scaler.inverse_transform(test_predict)
+            original_ytrain = scaler.inverse_transform(y_train.reshape(-1, 1))
+            original_ytest = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+            # Evaluation Metrics
+            train_rmse = math.sqrt(mean_squared_error(original_ytrain, train_predict))
+            test_rmse = math.sqrt(mean_squared_error(original_ytest, test_predict))
+            train_mape = np.mean(np.abs((original_ytrain - train_predict) / original_ytrain)) * 100
+            test_mape = np.mean(np.abs((original_ytest - test_predict) / original_ytest)) * 100
+
+            # Save Model State
+            st.session_state.update({
+                'model_ran': True, 'df': df,
+                'train_predict': train_predict, 'test_predict': test_predict,
+                'original_ytrain': original_ytrain, 'original_ytest': original_ytest,
+                'time_step': time_step, 'num_test_days': len(test_predict),
+                'asset_name_display': asset_name_display
+            })
+
+            # Display metrics
+            st.write("### 📊 Metrik Evaluasi")
+            st.write(f"**✅ RMSE (Training):** {train_rmse}")
+            st.write(f"**✅ RMSE (Testing):** {test_rmse}")
+            st.write(f"**📉 MAPE (Training):** {train_mape:.2f}%")
+            st.write(f"**📉 MAPE (Testing):** {test_mape:.2f}%")
+
+# Menampilkan hasil prediksi setelah model dijalankan
+if st.session_state.model_ran:
+    df = st.session_state.df
+    train_predict = st.session_state.train_predict
+    test_predict = st.session_state.test_predict
+    original_ytrain = st.session_state.original_ytrain
+    original_ytest = st.session_state.original_ytest
+    asset_name_display = st.session_state.asset_name_display
+
+    # DataFrame Prediksi
+    predict_dates = df['Date'][st.session_state.time_step+1:
+                               st.session_state.time_step+1+len(train_predict)+len(test_predict)]
+    result_df = pd.DataFrame({
+        'Date': df.iloc[time_step+1:len(train_predict)+len(test_predict)+time_step+1]['Date'].values,
+        'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
+        'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
+    })
+
+    # Plot hasil prediksi
+    st.write(f"### 🔮 Prediksi Harga {asset_name_display}")
+    fig = px.line(result_df, x='Date', y=['Original_Close', 'Predicted_Close'],
+                  labels={'value': 'Harga', 'Date': 'Tanggal'})
+    st.plotly_chart(fig)
+
+    # Tampilkan DataFrame
+    st.write("### 📊 Hasil Prediksi")
+    st.write(result_df)
