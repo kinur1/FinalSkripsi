@@ -66,10 +66,20 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     fig = px.line(df, x='Date', y='Close', title=f'Histori Harga {asset_name_display}')
     st.plotly_chart(fig)
 
-    # Preprocessing
+       # Preprocessing
+    if df.empty:
+        st.error("⚠️ Data dari Yahoo Finance kosong. Coba pilih rentang tanggal lain atau ticker lain.")
+        st.stop()
+
     closedf = df[['Close']]
     scaler = MinMaxScaler(feature_range=(0, 1))
+
     arr = np.array(closedf).reshape(-1, 1)
+    if arr.shape[0] == 0:
+        st.error("⚠️ Data 'Close' kosong. Coba ganti tanggal/ticker.")
+        st.stop()
+    else:
+        closedf = scaler.fit_transform(arr)
 
     # ✅ Validasi data kosong setelah reshape
     if arr.shape[0] == 0:
