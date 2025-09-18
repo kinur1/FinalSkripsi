@@ -52,6 +52,12 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     # Fetch data
     st.write(f"📥 Mengambil data harga {asset_name_display} ({asset}) dari Yahoo Finance...")
     df = yf.download(asset, start=start_date, end=end_date)
+
+    # ✅ Validasi data kosong
+    if df is None or df.empty:
+        st.error("⚠️ Data tidak ditemukan untuk rentang tanggal/ticker ini. Coba ganti input.")
+        st.stop()
+
     df = df.reset_index()
     df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
 
@@ -65,10 +71,10 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     scaler = MinMaxScaler(feature_range=(0, 1))
     arr = np.array(closedf).reshape(-1, 1)
 
-    # cek apakah data kosong
+    # ✅ Validasi data kosong setelah reshape
     if arr.shape[0] == 0:
         st.error("⚠️ Data kosong. Coba ganti ticker atau rentang tanggal yang valid.")
-        st.stop()  # hentikan eksekusi supaya tidak lanjut ke bawah
+        st.stop()
     else:
         closedf = scaler.fit_transform(arr)
 
@@ -92,7 +98,7 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
     X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
     X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
 
-    # Build LSTM Model (Enhanced)
+    # Build LSTM Model
     model = Sequential([
         LSTM(50, return_sequences=True, input_shape=(time_step, 1), activation="relu"),
         LSTM(50, return_sequences=False, activation="relu"),
@@ -124,7 +130,8 @@ if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
         'model_ran': True, 'df': df,
         'train_predict': train_predict, 'test_predict': test_predict,
         'original_ytrain': original_ytrain, 'original_ytest': original_ytest,
-        'time_step': time_step, 'num_test_days': len(test_predict)
+        'time_step': time_step, 'num_test_days': len(test_predict),
+        'asset_name_display': asset_name_display
     })
 
     # Display metrics
@@ -141,13 +148,13 @@ if st.session_state.model_ran:
     test_predict = st.session_state.test_predict
     original_ytrain = st.session_state.original_ytrain
     original_ytest = st.session_state.original_ytest
+    asset_name_display = st.session_state.asset_name_display
 
     # DataFrame Prediksi
-    predict_dates = df['Date'][st.session_state.time_step+1:st.session_state.time_step+1+len(train_predict)+len(test_predict)]
     result_df = pd.DataFrame({
         'Date': df.iloc[time_step+1:len(train_predict)+len(test_predict)+time_step+1]['Date'].values,
-    'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
-    'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
+        'Original_Close': np.concatenate([original_ytrain.flatten(), original_ytest.flatten()]),
+        'Predicted_Close': np.concatenate([train_predict.flatten(), test_predict.flatten()])
     })
 
     # Plot hasil prediksi
