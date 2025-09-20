@@ -1,5 +1,5 @@
 import streamlit as st
-import yfinance as yf
+import requests
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -9,6 +9,8 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM
+
+ALPHA_VANTAGE_API_KEY = "45G1G2AY7W8KD3S5"
 
 # Title
 st.title("📈 Prediksi Harga Cryptocurrency dengan LSTM")
@@ -43,17 +45,88 @@ asset_name_display = st.radio("💰 Pilih Aset", options=['BITCOIN', 'ETHEREUM']
 is_valid = (start_date < end_date)
 
 # Run Prediction Button
+def fetch_crypto_data(symbol: str, market: str, start_date, end_date):
+    """Fetch cryptocurrency daily data from Alpha Vantage."""
+    url = "https://www.alphavantage.co/query"
+    params = {
+        "function": "DIGITAL_CURRENCY_DAILY",
+        "symbol": symbol,
+        "market": market,
+        "apikey": ALPHA_VANTAGE_API_KEY,
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        st.error(f"❌ Gagal terhubung ke Alpha Vantage: {exc}")
+        return pd.DataFrame()
+
+    data = response.json()
+    time_series_key = "Time Series (Digital Currency Daily)"
+
+    if time_series_key not in data:
+        message = data.get("Note") or data.get("Error Message") or "Data tidak tersedia."
+        st.error(f"❌ Alpha Vantage tidak mengembalikan data: {message}")
+        return pd.DataFrame()
+
+    time_series = data[time_series_key]
+    df = pd.DataFrame.from_dict(time_series, orient="index")
+    df.index = pd.to_datetime(df.index)
+    df = df.rename(
+        columns={
+            "1a. open (USD)": "Open",
+            "2a. high (USD)": "High",
+            "3a. low (USD)": "Low",
+            "4a. close (USD)": "Close",
+            "5. volume": "Volume",
+            "6. market cap (USD)": "Market Cap",
+        }
+    )
+
+    numeric_columns = ["Open", "High", "Low", "Close", "Volume", "Market Cap"]
+    for column in numeric_columns:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    df = df.sort_index()
+
+    start_ts = pd.to_datetime(start_date)
+    end_ts = pd.to_datetime(end_date)
+    df = df.loc[(df.index >= start_ts) & (df.index <= end_ts)]
+
+    return df.reset_index().rename(columns={"index": "Date"})
+
+
 if st.button("🚀 Jalankan Prediksi", disabled=not is_valid):
-    
+
     # Mapping assets
-    asset_mapping = {'BITCOIN': 'BTC-USD', 'ETHEREUM': 'ETH-USD'}
-    asset = asset_mapping[asset_name_display]
+    asset_mapping = {
+        'BITCOIN': {'symbol': 'BTC', 'market': 'USD', 'display': 'BTC/USD'},
+        'ETHEREUM': {'symbol': 'ETH', 'market': 'USD', 'display': 'ETH/USD'}
+    }
+    asset_config = asset_mapping[asset_name_display]
 
     # Fetch data
-    st.write(f"📥 Mengambil data harga {asset_name_display} ({asset}) dari Yahoo Finance...")
-    df = yf.download(asset, start=start_date, end=end_date)
-    df = df.reset_index()
-    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+    st.write(
+        f"📥 Mengambil data harga {asset_name_display} ({asset_config['display']}) dari Alpha Vantage..."
+    )
+    df = fetch_crypto_data(
+        symbol=asset_config['symbol'],
+        market=asset_config['market'],
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if df.empty:
+        st.warning("⚠️ Data tidak tersedia untuk rentang tanggal yang dipilih.")
+        st.session_state.model_ran = False
+        st.stop()
+
+    if len(df) <= time_step + 1:
+        st.warning("⚠️ Data tidak cukup untuk melakukan pelatihan dengan konfigurasi time step yang dipilih.")
+        st.session_state.model_ran = False
+        st.stop()
 
     # Validasi jumlah data
     if len(df) <= time_step + 1:
